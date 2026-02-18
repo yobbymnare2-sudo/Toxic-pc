@@ -7,7 +7,7 @@ on:
       ts_api_key:         { description: "Tailscale API key (device admin, no Bearer)", required: true }
       ts_authkey:         { description: "Tailscale Auth key (reusable or ephemeral)", required: true }
       quick_test:         { description: "Run 5-minute test", type: boolean, default: false }
-      runtime_minutes:    { description: "Runtime (max 360; default 355 when not test)", required: false, default: "355" }
+      runtime_minutes:    { description: "Runtime (ignored if not quick_test; unlimited otherwise)", required: false, default: "355" }
       do_purge:           { description: "Purge bullet* devices at start (single instance only)", required: false, default: "true" }
       cycles:             { description: "0=stop after A; N=handoffs left incl this run", required: false, default: "0" }
       rdp_count:          { description: "How many RDP instances (1-10) [ignored if CRD provided]", required: false, default: "1" }
@@ -170,13 +170,13 @@ jobs:
           "TS_HOSTNAME=$hn" | Out-File -Append $env:GITHUB_ENV
 
           function Yes($v){ "$v" -match '^(?i:true|1|yes|on)$' }
-          function IntOr($v,$d){ if("$v" -match '^\d+$'){ [int]$v } else { [int]$d } }
-          $runtime = IntOr("${{ inputs.runtime_minutes }}",355)
+          
+          # Modified logic: Unlimited unless it's a quick_test
+          $runtime = 999999
           if (Yes("${{ inputs.quick_test }}")) { $runtime = 5 }
-          if (-not (Yes("${{ inputs.quick_test }}")) -and $runtime -lt 6) { $runtime = 355 }
-          if ($runtime -gt 360) { $runtime = 355 }
+          
           "RUNTIME_MINUTES=$runtime" | Out-File -Append $env:GITHUB_ENV
-          Write-Host "Hostname: $hn  | Runtime: $runtime"
+          Write-Host "Hostname: $hn  | Runtime: $runtime (0 = unlimited)"
 
       # ---------- PURGE only for SINGLE INSTANCE ----------
       - name: Purge bullet* devices (single-instance only)
@@ -288,13 +288,13 @@ jobs:
           $json = $curlResult | ConvertFrom-Json
           if ($json.status -eq "ok") { "SCREENSHOT_URL=$($json.data.downloadPage)" | Out-File -Append $env:GITHUB_ENV }
 
-      - name: Keep alive (to ${{ env.RUNTIME_MINUTES }} mins)
+      - name: Keep alive (Unlimited)
         run: |
           $mins = [int]"${{ env.RUNTIME_MINUTES }}"
           $end = (Get-Date).AddMinutes($mins)
           while ((Get-Date) -lt $end) {
             $mode = if ("$env:CRD_ENABLED" -eq '1') { '[CRD+RustDesk/RDP]' } else { '[RustDesk/RDP]' }
-            Write-Host ("$mode Heartbeat " + (Get-Date).ToString("HH:mm:ss") + " ends at " + $end.ToString("HH:mm:ss") + " | RS URL: $env:SCREENSHOT_URL")
+            Write-Host ("$mode Heartbeat " + (Get-Date).ToString("HH:mm:ss") + " | RS URL: $env:SCREENSHOT_URL")
             Start-Sleep -Seconds 60
           }
 
@@ -333,4 +333,3 @@ jobs:
               Write-Host "Dispatched Workflow B with cycles=$next"
             }
           } else { Write-Host "No cycles configured. Done." }
-          
